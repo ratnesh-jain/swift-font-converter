@@ -14,58 +14,40 @@ import XCTest
 
 final class FontConverterSnapshotTests: XCTestCase {
 
-    private func getMenloFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("Menlo") {
-            return resolved.path
+    private func resolveTestFont(named names: String..., fallbackPath: String? = nil) -> String? {
+        for name in names {
+            if let resolved = FontFinder.resolveFontPath(name) {
+                return resolved.path
+            }
         }
-        if FileManager.default.fileExists(atPath: "/System/Library/Fonts/Menlo.ttc") {
-            return "/System/Library/Fonts/Menlo.ttc"
+        if let fallbackPath, FileManager.default.fileExists(atPath: fallbackPath) {
+            return fallbackPath
         }
         return nil
+    }
+
+    private func getMenloFontPath() -> String? {
+        resolveTestFont(named: "Menlo", fallbackPath: "/System/Library/Fonts/Menlo.ttc")
     }
 
     private func getSFProFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("SF Pro Text Medium") {
-            return resolved.path
-        }
-        if let resolved = FontFinder.resolveFontPath("SF Pro Medium") {
-            return resolved.path
-        }
-        return nil
+        resolveTestFont(named: "SF Pro Text Medium", "SF Pro Medium")
     }
 
     private func getSFProRoundedFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("SF Pro Rounded Bold") {
-            return resolved.path
-        }
-        return nil
+        resolveTestFont(named: "SF Pro Rounded Bold")
     }
 
     private func getMonacoFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("Monaco") {
-            return resolved.path
-        }
-        if FileManager.default.fileExists(atPath: "/System/Library/Fonts/Monaco.ttf") {
-            return "/System/Library/Fonts/Monaco.ttf"
-        }
-        return nil
+        resolveTestFont(named: "Monaco", fallbackPath: "/System/Library/Fonts/Monaco.ttf")
     }
 
     private func getCourierFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("Courier New") {
-            return resolved.path
-        }
-        if FileManager.default.fileExists(atPath: "/System/Library/Fonts/Supplemental/Courier New.ttf") {
-            return "/System/Library/Fonts/Supplemental/Courier New.ttf"
-        }
-        return nil
+        resolveTestFont(named: "Courier New", fallbackPath: "/System/Library/Fonts/Supplemental/Courier New.ttf")
     }
 
     private func getSFProDisplayHeavyFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("SF Pro Display Heavy") {
-            return resolved.path
-        }
-        return nil
+        resolveTestFont(named: "SF Pro Display Heavy")
     }
 
     // MARK: - Menlo Tests

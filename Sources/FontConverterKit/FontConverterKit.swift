@@ -164,6 +164,87 @@ public final class FontConverter: @unchecked Sendable {
         self.threshold = threshold
     }
 
+    public convenience init?(fontName: String, size: CGFloat, threshold: UInt8 = 170) {
+        guard let resolved = FontFinder.resolveFontPath(fontName) else {
+            return nil
+        }
+        self.init(fontPath: resolved.path, size: size, threshold: threshold)
+    }
+
+    // MARK: - Private Helpers
+
+    private func renderGlyphPixels(
+        width: Int,
+        height: Int,
+        glyph: inout CGGlyph,
+        position: CGPoint
+    ) -> [UInt8]? {
+        var pixels = [UInt8](repeating: 255, count: width * height)
+        let colorSpace = CGColorSpaceCreateDeviceGray()
+        guard let ctx = CGContext(
+            data: &pixels,
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: width,
+            space: colorSpace,
+            bitmapInfo: CGImageAlphaInfo.none.rawValue
+        ) else {
+            return nil
+        }
+
+        ctx.setFillColor(gray: 1.0, alpha: 1.0)
+        ctx.fill(CGRect(x: 0, y: 0, width: width, height: height))
+        ctx.setFillColor(gray: 0.0, alpha: 1.0)
+
+        var pos = position
+        CTFontDrawGlyphs(ctFont, &glyph, &pos, 1, ctx)
+        return pixels
+    }
+
+    private func pack1BitPixels(
+        pixels: [UInt8],
+        stride: Int,
+        minX: Int,
+        maxX: Int,
+        minY: Int,
+        maxY: Int
+    ) -> [UInt8] {
+        var bytes = [UInt8]()
+        for y in minY...maxY {
+            var byteVal: UInt8 = 0
+            var bitIdx = 7
+            for x in minX...maxX {
+                if pixels[y * stride + x] < threshold {
+                    byteVal |= (1 << bitIdx)
+                }
+                bitIdx -= 1
+                if bitIdx < 0 {
+                    bytes.append(byteVal)
+                    byteVal = 0
+                    bitIdx = 7
+                }
+            }
+            if bitIdx != 7 {
+                bytes.append(byteVal)
+            }
+        }
+        return bytes
+    }
+
+    private static func formatCharacterDescription(_ char: Character) -> String {
+        var chDesc = String(char)
+        if chDesc == "\\" { chDesc = "\\\\" }
+        if chDesc == "\"" { chDesc = "\\\"" }
+        return chDesc
+    }
+
+    private static func formatHexBytes(_ bytes: [UInt8]) -> String {
+        bytes.map { String(format: "0x%02X", $0) }.joined(separator: ", ")
+    }
+
+    // MARK: - Glyph Extraction
+
     public func extractProportionalGlyph(_ char: Character) -> GlyphData {
         guard let u16 = char.utf16.first else {
             return GlyphData(advance: 0, width: 0, height: 0, left: 0, top: 0, bytes: [])
@@ -185,28 +266,17 @@ public final class FontConverter: @unchecked Sendable {
 
         let gw = max(1, Int(ceil(bbox.width)) + 40)
         let gh = lineHeight + 20
-        var pixels = [UInt8](repeating: 255, count: gw * gh)
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let ctx = CGContext(
-            data: &pixels,
+        let cgBaselineY = ceil(descent) + 6
+        let padX: CGFloat = 10
+
+        guard let pixels = renderGlyphPixels(
             width: gw,
             height: gh,
-            bitsPerComponent: 8,
-            bytesPerRow: gw,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
+            glyph: &glyph,
+            position: CGPoint(x: padX, y: cgBaselineY)
         ) else {
             return GlyphData(advance: advance, width: 0, height: 0, left: 0, top: 0, bytes: [])
         }
-
-        ctx.setFillColor(gray: 1.0, alpha: 1.0)
-        ctx.fill(CGRect(x: 0, y: 0, width: gw, height: gh))
-        ctx.setFillColor(gray: 0.0, alpha: 1.0)
-
-        let cgBaselineY = ceil(descent) + 6
-        let padX: CGFloat = 10
-        var pos = CGPoint(x: padX, y: cgBaselineY)
-        CTFontDrawGlyphs(ctFont, &glyph, &pos, 1, ctx)
 
         let baselineMemoryRow = (gh - 1) - Int(cgBaselineY)
         let baselineOffsetInLine = Int(ceil(ascent))
@@ -231,26 +301,7 @@ public final class FontConverter: @unchecked Sendable {
         let bh = maxY - minY + 1
         let bLeft = Int8(minX - Int(padX))
         let bTop = Int8(minY - baselineMemoryRow + baselineOffsetInLine)
-
-        var bytes = [UInt8]()
-        for y in minY...maxY {
-            var byteVal: UInt8 = 0
-            var bitIdx = 7
-            for x in minX...maxX {
-                if pixels[y * gw + x] < threshold {
-                    byteVal |= (1 << bitIdx)
-                }
-                bitIdx -= 1
-                if bitIdx < 0 {
-                    bytes.append(byteVal)
-                    byteVal = 0
-                    bitIdx = 7
-                }
-            }
-            if bitIdx != 7 {
-                bytes.append(byteVal)
-            }
-        }
+        let bytes = pack1BitPixels(pixels: pixels, stride: gw, minX: minX, maxX: maxX, minY: minY, maxY: maxY)
 
         return GlyphData(
             advance: advance,
@@ -263,8 +314,8 @@ public final class FontConverter: @unchecked Sendable {
     }
 
     public func extractFixedGlyph(_ char: Character, cellWidth: Int) -> FixedGlyphData {
+        let bpr = (cellWidth + 7) / 8
         guard let u16 = char.utf16.first else {
-            let bpr = (cellWidth + 7) / 8
             return FixedGlyphData(bytes: [UInt8](repeating: 0, count: bpr * lineHeight))
         }
         var u = u16
@@ -273,48 +324,18 @@ public final class FontConverter: @unchecked Sendable {
 
         let gw = cellWidth
         let gh = lineHeight
-        var pixels = [UInt8](repeating: 255, count: gw * gh)
-        let colorSpace = CGColorSpaceCreateDeviceGray()
-        guard let ctx = CGContext(
-            data: &pixels,
+        let cgBaselineY = ceil(descent)
+
+        guard let pixels = renderGlyphPixels(
             width: gw,
             height: gh,
-            bitsPerComponent: 8,
-            bytesPerRow: gw,
-            space: colorSpace,
-            bitmapInfo: CGImageAlphaInfo.none.rawValue
+            glyph: &glyph,
+            position: CGPoint(x: 0, y: cgBaselineY)
         ) else {
-            let bpr = (cellWidth + 7) / 8
             return FixedGlyphData(bytes: [UInt8](repeating: 0, count: bpr * lineHeight))
         }
 
-        ctx.setFillColor(gray: 1.0, alpha: 1.0)
-        ctx.fill(CGRect(x: 0, y: 0, width: gw, height: gh))
-        ctx.setFillColor(gray: 0.0, alpha: 1.0)
-
-        let cgBaselineY = ceil(descent)
-        var pos = CGPoint(x: 0, y: cgBaselineY)
-        CTFontDrawGlyphs(ctFont, &glyph, &pos, 1, ctx)
-
-        var bytes = [UInt8]()
-        for y in 0..<gh {
-            var byteVal: UInt8 = 0
-            var bitIdx = 7
-            for x in 0..<gw {
-                if pixels[y * gw + x] < threshold {
-                    byteVal |= (1 << bitIdx)
-                }
-                bitIdx -= 1
-                if bitIdx < 0 {
-                    bytes.append(byteVal)
-                    byteVal = 0
-                    bitIdx = 7
-                }
-            }
-            if bitIdx != 7 {
-                bytes.append(byteVal)
-            }
-        }
+        let bytes = pack1BitPixels(pixels: pixels, stride: gw, minX: 0, maxX: gw - 1, minY: 0, maxY: gh - 1)
         return FixedGlyphData(bytes: bytes)
     }
 
@@ -377,10 +398,8 @@ public final class FontConverter: @unchecked Sendable {
         for code: UInt8 in 32...126 {
             let ch = Character(UnicodeScalar(code))
             let g = extractProportionalGlyph(ch)
-            let bytesStr = g.bytes.map { String(format: "0x%02X", $0) }.joined(separator: ", ")
-            var chDesc = String(ch)
-            if chDesc == "\\" { chDesc = "\\\\" }
-            if chDesc == "\"" { chDesc = "\\\"" }
+            let bytesStr = Self.formatHexBytes(g.bytes)
+            let chDesc = Self.formatCharacterDescription(ch)
             glyphLines.append("            ProportionalGlyph(advance: \(g.advance), width: \(g.width), height: \(g.height), left: \(g.left), top: \(g.top), bytes: [\(bytesStr)]), // '\(chDesc)' (\(code))")
         }
 
@@ -422,10 +441,8 @@ public final class FontConverter: @unchecked Sendable {
         for code: UInt8 in 32...126 {
             let ch = Character(UnicodeScalar(code))
             let g = extractFixedGlyph(ch, cellWidth: cellW)
-            let bytesStr = g.bytes.map { String(format: "0x%02X", $0) }.joined(separator: ", ")
-            var chDesc = String(ch)
-            if chDesc == "\\" { chDesc = "\\\\" }
-            if chDesc == "\"" { chDesc = "\\\"" }
+            let bytesStr = Self.formatHexBytes(g.bytes)
+            let chDesc = Self.formatCharacterDescription(ch)
             glyphLines.append("            [\(bytesStr)], // '\(chDesc)' (\(code))")
         }
 

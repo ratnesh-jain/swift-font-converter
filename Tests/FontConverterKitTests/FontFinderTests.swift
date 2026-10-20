@@ -84,13 +84,8 @@ struct FontFinderTests {
 struct FontConverterTests {
 
     private func getTestFontPath() -> String? {
-        if let resolved = FontFinder.resolveFontPath("Menlo") {
-            return resolved.path
-        }
-        if FileManager.default.fileExists(atPath: "/System/Library/Fonts/Menlo.ttc") {
-            return "/System/Library/Fonts/Menlo.ttc"
-        }
-        return nil
+        FontFinder.resolveFontPath("Menlo")?.path
+            ?? (FileManager.default.fileExists(atPath: "/System/Library/Fonts/Menlo.ttc") ? "/System/Library/Fonts/Menlo.ttc" : nil)
     }
 
     @Test("FontConverter loads valid font successfully")
@@ -101,6 +96,15 @@ struct FontConverterTests {
         let converter = try #require(FontConverter(fontPath: path, size: 16, threshold: 170))
         #expect(converter.lineHeight > 0)
         #expect(converter.ascent > 0)
+    }
+
+    @Test("FontConverter loads font by name successfully")
+    func fontConverterInitByName() {
+        if FontFinder.resolveFontPath("Menlo") != nil {
+            let converter = FontConverter(fontName: "Menlo", size: 16)
+            #expect(converter != nil)
+            #expect(converter?.lineHeight ?? 0 > 0)
+        }
     }
 
     @Test("Extract proportional glyph produces valid bounds and bitmap")
