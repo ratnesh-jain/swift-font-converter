@@ -133,6 +133,9 @@ if let converter = FontConverter(fontName: "Menlo", size: 16) {
 }
 ```
 
+<img width="901" height="696" alt="Screenshot 2026-10-20 at 2 58 54 PM" src="https://github.com/user-attachments/assets/de146b66-6d35-47c1-8244-56aa64734c49" />
+
+
 ---
 
 ## Running Tests
